@@ -1,0 +1,343 @@
+******************************************************
+*Variables ***
+*BC_death_both is the event variable that codes 0: other reason death; 1: BC death; 2 censored 
+*D_BC_death_BOTH is the events dates (other reason death, BC death, and censored)
+*Invitationdate: Invitation date
+*Timetopart: Time to participate 
+*Charlson: is the charlson comorbidity variable 0: no comorbidity, 1: one or two comorbidities, 2: 3+ comorbidities.
+*SES: socio economic status 1: low, 2:medium, 3 high
+*Exit_v: is the variable of the administrative end of follow-up. I.e., the end of 2007 for those born in 1938 onwords and end of 2015 if born before 1938
+*The data of uncloned non-breast cancer death: "competingrisk_unclonedarm.dta". It has 2 variables the id and the uncloned_arm indicating the number of compting risks in the orriginal uncloned arms. The variable uncloned_arm =1 if participants and 2 if not*/ 
+/*The steps including cloning, censoring, weighting, and estimating KM are adobted directly from Camille Maringe et al. (2020) "Reflection on modern methods: trial emulation in the presence of immortal-time bias. Assessing the benefit of major surgery for elderly lung cancer patients using observational data"*/
+clear all
+
+cd "E:Work data"
+set seed 5632891
+forval i = 0(1)500 {
+	
+/// selected patients
+	use "My data", clear
+	if `i' > 0 {
+		bsample
+	}
+	*-----------------------------------------------
+    * Treatment IPTW for ATE and ATT (baseline PS)
+    *-----------------------------------------------
+	gen byte T = (participation==1 & timetopart<=91)
+    label var T "Participated within 91 days"
+    quietly logit T c.age i.charlson i.SES
+    predict double p, pr
+    quietly sum T, meanonly
+    scalar pbar = r(mean)
+
+    gen double w_tx_ATT = .
+    replace w_tx_ATT = 1                             if T==1
+    replace w_tx_ATT = (p/(1-p)) * ((1-pbar)/pbar)   if T==0
+
+    foreach w in w_tx_ATT {
+        quietly _pctile `w' if `w'<., p(1 99)
+        local lo = r(r1)
+        local hi = r(r2)
+        replace `w' = `lo' if `w' < `lo'
+        replace `w' = `hi' if `w' > `hi'
+    }
+	gen fup_obs= D_BC_death_both-invitationdate /*D_BC_death_both variable contains the dates if censored, died from breast cancer, and from other reason death*/
+*************Step 1 cloning: creating of outcome and follow-up time at each arm***********
+	stset D_BC_death_both , id(id1) failure(BC_death_both==1) origin(time invitationdate)  exit(exit_v) 
+	gen fup_obs= D_BC_death_both-invitationdate
+	drop D_BC_death_both 
+	rename fup_obs D_BC_death_both
+	gen tstart==_t0
+	*Arm A: no participation within 91 days 
+	gen outcomeA=_d
+	gen D_BC_death_BOTHA=_t
+
+	replace outcomeA=0 if participation==1 & timetopart<=91
+	replace D_BC_death_BOTHA=timetopart if participation==1 & timetopart<=91
+
+	*Arm B: participation within 3 months 
+	gen outcomeB=_d
+	gen D_BC_death_BOTHB=_t
+	
+	replace outcomeB=0 if (participation==0 & _t>91)| ( participation==1 & timetopart>91 & timetopart!=.)
+	replace D_BC_death_BOTHB=91 if (participation==0 & _t>91)| ( participation==1 & timetopart>91 & timetopart!=.) 
+
+	**append clones
+	preserve 
+		drop outcomeB D_BC_death_BOTHB
+		rename outcomeA outcome
+		rename D_BC_death_BOTHA D_BC_death_BOTH
+		gen arm="NoPart" /*Here I have a question why did we say it's noparticipation*/
+		tempfile a 
+		save "`a'", replace
+	restore	
+		drop outcomeA D_BC_death_BOTHA
+		rename outcomeB outcome
+		rename D_BC_death_BOTHB D_BC_death_BOTH 
+		gen arm="part"
+		cap append using "`a'"
+	tab arm, m 
+
+// Weight models
+
+	sort age charlson  SES D_BC_death_BOTH
+	gen NewID = _n
+
+	sum age
+
+	tab charlson, gen(charlson)
+	tab SES, gen(SES) 
+
+
+	** add 1 day to 0-survivors
+	replace D_BC_death_BOTH= 1 if D_BC_death_BOTH==0
+	
+	** Weight model: define survival time and event indicator	
+	* Part Arm
+	** scenario A-E: they do not deviate at time of part, but are not at risk of deviating any more
+	gen wm_D_BC_death_BOTH= timetopart if arm == "part" & timetopart<=91 & timetopart!=. & participation == 1 
+	gen wm_outcome = 0 if arm == "part" & timetopart<=91 & timetopart!=. & participation == 1 
+
+	** scenario F-J,M: they deviate at 91 days
+	replace wm_D_BC_death_BOTH = 91 if arm == "part" & ((participation == 0 & D_BC_death_BOTH >= 91) | (timetopart>91 &  participation== 1))
+	replace wm_outcome = 1 if arm == "part" & ((participation == 0 & D_BC_death_BOTH >= 91) | (timetopart>91 & participation == 1)) 
+
+	** scenario K, L: they do not deviate, but we need to keep their survival as observed and censor them as we do not know what happens afterwards
+	replace wm_D_BC_death_BOTH = D_BC_death_BOTH if arm == "part" & participation == 0 & D_BC_death_BOTH < 91
+	replace wm_outcome = 0 if arm == "part" & participation== 0 & D_BC_death_BOTH < 91
+	** add 1 days to 0-survivors
+	replace wm_D_BC_death_BOTH= 1 if arm == "part" & wm_D_BC_death_BOTH==0 
+
+	* No part Arm	
+	** A-E: they do not deviate at time of event, but are not at risk of deviating any more
+	replace wm_D_BC_death_BOTH = timetopart if arm == "NoPart" & timetopart<=91 & participation == 1 
+	replace wm_outcome = 1 if arm == "NoPart" & timetopart<=91 & participation == 1 
+
+	** F-J,M: they deviate at 3m
+	replace wm_D_BC_death_BOTH = 91 if arm == "NoPart" & ((participation == 0 & D_BC_death_BOTH >= 91) | (timetopart>91 & participation == 1)) 
+	replace wm_outcome = 0 if arm == "NoPart" & ((participation == 0 & D_BC_death_BOTH >= 91) | (timetopart>91 & participation == 1)) 
+
+	** K, L: they do not deviate, but we need to keep their survival as observed and censor them as we do not know what happens afterwards
+	replace wm_D_BC_death_BOTH = D_BC_death_BOTH if arm == "NoPart" & participation == 0 & D_BC_death_BOTH < 91
+	replace wm_outcome = 0 if arm == "NoPart" & participation == 0 & D_BC_death_BOTH < 91
+
+	** add 1 days to 0-survivors
+	replace wm_D_BC_death_BOTH= 1 if arm == "NoPart" & wm_D_BC_death_BOTH==0 
+
+	* split times
+	** times of event
+	stset D_BC_death_BOTH, fail(outcome)  id(NewID)
+	stsplit , at(failures)
+
+	gen tstart = _t0
+	gen tstop = _t
+
+	** times of censoring
+	gen TrialEmul_cens = 1-outcome
+	stset D_BC_death_BOTH, fail(TrialEmul_cens) id(NewID)
+	stsplit , at(failures)
+
+	replace tstart = _t0 if tstart<_t0 & _t0 != . & _t != .
+	replace tstop = _t if tstop>_t & _t0 != . & _t != .
+
+	preserve
+		keep if arm == "part"
+		replace outcome = . if TrialEmul_cens == .
+
+		* adapt records to the long format
+		sort NewID tstart
+
+		bysort NewID (tstart): replace wm_outcome = 0 if _n!=_N
+
+		* Weight model:
+		stset tstop, origin(time tstart) failure(wm_outcome)  id(NewID)
+		stcox c.age ib0.charlson ib1.SES, efron
+
+		predict ch2_2, basech
+		gen s0_2=exp(-ch2_2)
+		predict xbCox2_2, xb
+		gen weight = 1/s0_2^(exp(xbCox2_2))
+		drop ch2_2 	
+		*numerator (reduced model for stabilised weights: no covariates)
+		stcox 
+		predict ch2_num, basech
+		gen s0_num=exp(-ch2_num)
+		*stabalised weight =s0_num^(1)/s0_denom^(exp(xb))
+		gen sw=s0_num/(s0_2^(exp(xbCox2_2)))
+		drop weight
+		rename sw weight
+		summ weight if weight<., detail
+		*Trucate extreme weights (variance control)
+		_pctile weight if weight<., p(1 99)
+		local wlo=r(r1)
+		local whi= r(r2)
+		gen w_trunc= weight 
+		replace w_trunc= `wlo' if weight<`wlo'
+		replace w_trunc=`whi' if weight> `whi'
+		summ w_trunc, detail
+		drop weight
+		rename w_trunc weight
+		tempfile part 
+		save "`part'", replace
+	restore
+	preserve
+		keep if arm == "NoPart"
+		replace outcome = . if TrialEmul_cens == .
+
+		* adapt records to the long format
+		sort NewID tstart
+		bysort NewID: replace wm_outcome = 0 if _n!=_N
+
+		* Weight model trial 2:
+		stset tstop, origin(time tstart) failure(wm_outcome)  id(NewID)
+		stcox age ib0.charlson ib1.SES, efron
+
+		predict ch2_2, basech
+		gen s0_2=exp(-ch2_2)
+		predict xbCox2_2, xb
+		gen weight = 1/s0_2^(exp(xbCox2_2)) 
+		drop ch2_2
+		*numerator (reduced model for stabilised weights: no covariates)
+		stcox
+		predict ch2_num, basech
+		gen s0_num=exp(-ch2_num)
+		*stabalised weight =s0_num^(1)/s0_denom^(exp(xb))
+		gen sw=s0_num/(s0_2^(exp(xbCox2_2)))
+		drop weight
+		rename sw weight
+		summ weight if weight<., detail
+		*Truncate extreme weights (variance control)
+		_pctile weight if weight<., p(1 99)
+		local wlo=r(r1)
+		local whi= r(r2)
+		gen w_trunc= weight 
+		replace w_trunc= `wlo' if weight<`wlo'
+		replace w_trunc=`whi' if weight> `whi'
+		summ w_trunc, detail
+		drop weight
+		rename w_trunc weight
+		tempfile NoPart
+		save "`NoPart'", replace
+	restore	
+	
+	use "`part'", clear
+	append using "`NoPart'"
+	
+	replace weight = 1 if wm_outcome == 1 & tstop > 91 & tstop <92
+	sum weight
+	local max_weight = r(max)
+    gen double w_final_ATT = weight * w_tx_ATT
+    label var w_final_ATT "ATT: IPTW x IPCW"
+	
+
+	
+	// create a new ID variable for each clone in each arm
+	tostring NewID, gen(NewID_str)
+	replace NewID_str = "000" + NewID_str if length(NewID_str)== 1
+	replace NewID_str = "00" + NewID_str if length(NewID_str)== 2
+	replace NewID_str = "0" + NewID_str if length(NewID_str)== 3
+	gen Anal_ID = "1" + NewID_str if arm == "part" 
+	replace Anal_ID = "2" + NewID_str if arm == "NoPart" 
+
+	
+	gen arm_value = 1 if arm == "part"
+	replace arm_value = 0 if arm_value == .
+	
+
+
+	
+  ********************************************
+  *STEP 3- ESTIMATING THE CIF with competing risk
+  ********************************************
+* Include the competing risk in the outcome variable
+* Merge with the data of uncloned non-breast cancer death 
+merge m:1 id1 using "competingrisk_unclonedarm.dta" 
+drop if _merge==2 /*Those in the original sample =0, however they are not 0 when generating the confidence intervals therfore we drop them*/
+
+
+ ** CIF - WEIGHTED ANALYSIS	****** We used w_final_ATT when calculating the average treatment effect on the treated
+	stset tstop [pweight = weight ], enter(time tstart) failure(outcome==1) 
+	sts gen KM_p_`i'=s if arm=="Part"
+	sts gen KM_np_`i'=s if arm=="NoPart"
+	
+	gen comple_P_`i'=1-KM_p_`i'
+	gen comple_np_`i'=1-KM_np_`i'
+	
+	*Now we replace for competing risks: 
+	replace outcome=2 if BC_death_both==0 & outcome==0	
+	replace outcome=0 if uncloned_arm==1 & arm=="NoPart" & outcome==2
+	replace outcome=0 if uncloned_arm==2 & arm=="part" & outcome==2
+	stcompet CIF_p_w_`i'=ci if arm="part", compet1(2)
+    stcompet CIF_np_w_`i'=ci if arm="NoPart", compet1(2)
+	
+	
+	
+	duplicates drop
+	sort D_BC_death_BOTH
+
+	keep D_BC_death_BOTH CIF_np_w_* CIF_p_w_* KM_np_* KM_p_* comple_P_* comple_np_*
+	
+	bysort D_BC_death_BOTH (KM_p_`i'): replace KM_p_`i'= KM_p_`i'[1]
+	bysort D_BC_death_BOTH (KM_np_`i'): replace KM_np_`i'= KM_np_`i'[1]
+	bysort D_BC_death_BOTH (comple_P_`i'): replace comple_P_`i'= comple_P_`i'[1]
+	bysort D_BC_death_BOTH (comple_np_`i'): replace comple_np_`i'= comple_np_`i'[1]
+	bysort D_BC_death_BOTH (CIF_np_w_`i'): replace CIF_np_w_`i'= CIF_np_w_`i'[1]
+	bysort D_BC_death_BOTH (CIF_p_w_`i'): replace CIF_p_w_`i'= CIF_p_w_`i'[1]
+	
+	quietly count if missing(comple_P_`i')
+	while (r(N)) {
+		replace comple_P_`i'= comple_P_`i'[_n-1] if missing(comple_P_`i') & _n>1
+	}
+	quietly count if missing(comple_np_`i')
+	while (r(N)) {
+		replace comple_np_`i'= comple_np_`i'[_n-1] if missing(comple_np_`i') & _n>1
+	}
+	quietly count if missing(CIF_np_w_`i')
+	while (r(N)) {
+		replace CIF_np_w_`i'= CIF_np_w_`i'[_n-1] if missing(CIF_np_w_`i') & _n>1
+	}
+	quietly count if missing(CIF_p_w_`i')
+	while (r(N)) {
+		replace CIF_p_w_`i'= CIF_p_w_`i'[_n-1] if missing(CIF_p_w_`i') & _n>1
+	}
+	sort D_BC_death_BOTH
+	gen diff_comple_`i'=comple_np_`i'-comple_P_`i'
+	gen ratio_comple_`i'=comple_P_`i'/comple_np_`i' if comple_np_`i'!=0
+	gen diff_CI_`i'=CIF_np_w_`i'-CIF_p_w_`i'
+	gen ratio_CI_`i'=CIF_p_w_`i'/CIF_np_w_`i' if CIF_np_w_`i'!=0
+	cap merge D_BC_death_BOTH using "BootstrapResults"
+	cap drop 
+	sort D_BC_death_BOTH
+	save "BootstrapResults.dta", replace
+}
+
+**For around 20 years **to calculate the 10 and 15 years we changed the line 317 and 332 accordingly
+** results for CI
+	use "BootstrapResults.dta", clear
+	rename D_BC_death_BOTH fup
+	keep if fup <=7300
+	sort fup
+		forval i = 1(1)500 {	
+	rename CIF_np_w_`i' CI_np_`i'
+	rename CIF_p_w_`i' CI_p_`i'
+	replace CI_np_`i'= CI_np_`i'[_n-1] if missing(CI_np_`i') & _n>1
+	replace CI_p_`i'= CI_p_`i'[_n-1] if missing(CI_p_`i') & _n>1
+	replace diff_CI_`i'= diff_CI_`i'[_n-1] if missing(diff_CI_`i') & _n>1
+	replace ratio_CI_`i'= ratio_CI_`i'[_n-1] if missing(ratio_CI_`i') & _n>1
+	replace comple_np_`i'= comple_np_`i'[_n-1] if missing(comple_np_`i') & _n>1
+	replace comple_P_`i'= comple_P_`i'[_n-1] if missing(comple_P_`i') & _n>1
+	replace diff_comple_`i'= diff_comple_`i'[_n-1] if missing(diff_comple_`i') & _n>1
+	replace ratio_comple_`i'= ratio_comple_`i'[_n-1] if missing(ratio_comple_`i') & _n>1
+	}
+	
+	drop KM_np_* KM_p_*
+	keep if fup==7300
+	reshape long CI_np_ CI_p_ diff_CI_ ratio_CI_ comple_np_ comple_P_ diff_comple_ ratio_comple_, i(fup) j(bs) 
+	
+	duplicates drop
+	list CI_np_ CI_p_ diff_CI_ ratio_CI_ comple_np_ comple_P_ diff_comple_ ratio_comple_ if bs == 0
+	
+	di "CI for CIF"
+	centile CI_np_ CI_p_ diff_CI_ ratio_CI_ comple_np_ comple_P_ diff_comple_ ratio_comple_ if bs!=0, centile(2.5 97.5)
+	
+	
