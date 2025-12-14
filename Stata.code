@@ -7,7 +7,8 @@
 *Charlson: is the charlson comorbidity variable 0: no comorbidity, 1: one or two comorbidities, 2: 3+ comorbidities.
 *SES: socio economic status 1: low, 2:medium, 3 high
 *Exit_v: is the variable of the administrative end of follow-up. I.e., the end of 2007 for those born in 1938 onwords and end of 2015 if born before 1938
-*The data of uncloned non-breast cancer death: "competingrisk_unclonedarm.dta". It has 2 variables the id and the uncloned_arm indicating the number of compting risks in the orriginal uncloned arms. The variable uncloned_arm =1 if participants and 2 if not*/ 
+*The data of uncloned non-breast cancer death: "competingrisk_unclonedarm.dta". It has 2 variables the id and the uncloned_arm indicating the number of compting risks in the original uncloned arms. The survivors under the scenario H (i.e., participated after the grace period) were already added to the non-participants arm in this data set.
+*The variable uncloned_arm =1 if participants and 2 if not*/ 
 /*The steps including cloning, censoring, weighting, and estimating KM are adobted directly from Camille Maringe et al. (2020) "Reflection on modern methods: trial emulation in the presence of immortal-time bias. Assessing the benefit of major surgery for elderly lung cancer patients using observational data"*/
 clear all
 
@@ -249,13 +250,17 @@ forval i = 0(1)500 {
   ********************************************
   *STEP 3- ESTIMATING THE CIF with competing risk
   ********************************************
-* Include the competing risk in the outcome variable
+* Bring in information on non–breast-cancer deaths from the *uncloned* data ///
+   Rationale: In the cloned dataset, non-BC death may need to be assigned as a ///
+   competing event (outcome==2). The uncloned file helps identify who truly had ///
+   non-BC death and (importantly) how it should be mapped across arms. ///
+   The uncloned file had already added those who participated after 91 days to the non-participant group.
 * Merge with the data of uncloned non-breast cancer death 
 merge m:1 id1 using "competingrisk_unclonedarm.dta" 
 drop if _merge==2 /*Those in the original sample =0, however they are not 0 when generating the confidence intervals therfore we drop them*/
+*Keeping them can cause problems later (e.g., during CI generation or resampling).
 
-
- ** CIF - WEIGHTED ANALYSIS	****** We used w_final_ATT when calculating the average treatment effect on the treated
+ ** 1-KM - WEIGHTED ANALYSIS	****** We used w_final_ATT when calculating the average treatment effect on the treated
 	stset tstop [pweight = weight ], enter(time tstart) failure(outcome==1) 
 	sts gen KM_p_`i'=s if arm=="Part"
 	sts gen KM_np_`i'=s if arm=="NoPart"
@@ -263,10 +268,27 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 	gen comple_P_`i'=1-KM_p_`i'
 	gen comple_np_`i'=1-KM_np_`i'
 	
-	*Now we replace for competing risks: 
+	*Now we replace for competing risks:
+	*If a person did die from non-breast cancer and currently has outcome==0, ///
+     we reclassify that as competing death (outcome==2) in both arms.
 	replace outcome=2 if BC_death_both==0 & outcome==0	
-	replace outcome=0 if uncloned_arm==1 & arm=="NoPart" & outcome==2
-	replace outcome=0 if uncloned_arm==2 & arm=="part" & outcome==2
+	*Arm-assignment rules for competing events in the cloned design.
+   /*Scenario E (Figure 3):
+   - Individuals who experienced non–breast-cancer death before the end of the
+     grace period (e.g., 91 days) should remain eligible in BOTH arms.
+     For them, outcome==2 should remain in both arms. These survivors had their weights already calculated in the weight models. 
+	Scinarios A-H except E (Figure 3):
+   - Non–breast-cancer deaths occurred after the grace period, the competing
+     event should only be counted in the arm in which the person is still "at risk".
+   - In the *other* arm (where the individual would have been censored by the
+     cloning rules), we set outcome back to 0 so the event is not incorrectly
+     counted as a competing event in that arm.*/
+	 replace outcome=0 if uncloned_arm==1 & arm=="NoPart" & outcome==2
+	 replace outcome=0 if uncloned_arm==2 & arm=="part" & outcome==2
+	 *The weights should be only calculated up to 91 days. Therfore, no need to calculate weights for the general cases
+	 *We did not have any survivor under the scinarios I-M (Figure 3). Therfore, no need to change for those.
+	
+	*CIF - WEIGHTED ANALYSIS
 	stcompet CIF_p_w_`i'=ci if arm="part", compet1(2)
     stcompet CIF_np_w_`i'=ci if arm="NoPart", compet1(2)
 	
@@ -315,7 +337,7 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 ** results for CI
 	use "BootstrapResults.dta", clear
 	rename D_BC_death_BOTH fup
-	keep if fup <=7300
+	keep if fup <=7253
 	sort fup
 		forval i = 1(1)500 {	
 	rename CIF_np_w_`i' CI_np_`i'
