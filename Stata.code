@@ -337,7 +337,7 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 ** results for CI
 	use "BootstrapResults.dta", clear
 	rename D_BC_death_BOTH fup
-	keep if fup <=7253
+	keep if fup <=7305
 	sort fup
 		forval i = 1(1)500 {	
 	rename CIF_np_w_`i' CI_np_`i'
@@ -353,7 +353,7 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 	}
 	
 	drop KM_np_* KM_p_*
-	keep if fup==7300
+	keep if fup==7305
 	reshape long CI_np_ CI_p_ diff_CI_ ratio_CI_ comple_np_ comple_P_ diff_comple_ ratio_comple_, i(fup) j(bs) 
 	
 	duplicates drop
