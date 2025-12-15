@@ -10,6 +10,7 @@
 *The data of uncloned non-breast cancer death: "competingrisk_unclonedarm.dta". It has 2 variables the id and the uncloned_arm indicating the number of compting risks in the original uncloned arms. The survivors under the scenario H (i.e., participated after the grace period) were already added to the non-participants arm in this data set.
 *The variable uncloned_arm =1 if participants and 2 if not*/ 
 /*The steps including cloning, censoring, weighting, and estimating KM are adobted directly from Camille Maringe et al. (2020) "Reflection on modern methods: trial emulation in the presence of immortal-time bias. Assessing the benefit of major surgery for elderly lung cancer patients using observational data"*/
+
 clear all
 
 cd "E:Work data"
