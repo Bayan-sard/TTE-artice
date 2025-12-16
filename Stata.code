@@ -255,7 +255,7 @@ forval i = 0(1)500 {
    Rationale: In the cloned dataset, non-BC death may need to be assigned as a ///
    competing event (outcome==2). The uncloned file helps identify who truly had ///
    non-BC death and (importantly) how it should be mapped across arms. ///
-   The uncloned file had already added those who participated after 91 days to the non-participant group.
+   The uncloned file had already added those who participated after 91 days (scenario H, Figure 2) to the non-participant group.
 * Merge with the data of uncloned non-breast cancer death 
 merge m:1 id1 using "competingrisk_unclonedarm.dta" 
 drop if _merge==2 /*Those in the original sample =0, however they are not 0 when generating the confidence intervals therfore we drop them*/
