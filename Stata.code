@@ -334,11 +334,11 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 	save "BootstrapResults.dta", replace
 }
 
-**For around 20 years **to calculate the 10 and 15 years we changed the line 317 and 332 accordingly
+**For around 10 years **to calculate the 15 and 20 years we changed the line 317 and 332 accordingly
 ** results for CI
 	use "BootstrapResults.dta", clear
 	rename D_BC_death_BOTH fup
-	keep if fup <=7305
+	keep if fup <=3653
 	sort fup
 		forval i = 1(1)500 {	
 	rename CIF_np_w_`i' CI_np_`i'
