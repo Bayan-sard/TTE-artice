@@ -354,7 +354,7 @@ drop if _merge==2 /*Those in the original sample =0, however they are not 0 when
 	}
 	
 	drop KM_np_* KM_p_*
-	keep if fup==7305
+	keep if fup==3653
 	reshape long CI_np_ CI_p_ diff_CI_ ratio_CI_ comple_np_ comple_P_ diff_comple_ ratio_comple_, i(fup) j(bs) 
 	
 	duplicates drop
