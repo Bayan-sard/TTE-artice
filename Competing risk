@@ -45,7 +45,7 @@ forval i = 0(1)500 {
 		drop outcomeB D_BC_death_BOTHB
 		rename outcomeA outcome
 		rename D_BC_death_BOTHA D_BC_death_BOTH
-		gen arm="NoPart" /*Here I have a question why did we say it's noparticipation*/
+		gen arm="NoPart" 
 		tempfile a 
 		save "`a'", replace
 	restore	
